@@ -1,0 +1,27 @@
+ID,Code,Correct Code,Context,Explanation
+0,"#include <rdi.h>
+void setup() {
+    RDI_init();
+    float v = 3.0;
+    RDI_END();
+    set_voltage(v);
+}","#include <rdi.h>
+void setup() {
+    RDI_init();
+    float v = 3.0;
+    RDI_begin();
+    set_voltage(v);
+}",RDI method naming,"RDI_begin() changed to RDI_END()"
+1,"#include <rdi.h>
+void configure() {
+    float v = -2.0;
+    RDI_begin();
+    set_voltage(v);
+    RDI_end();
+}","#include <rdi.h>
+void configure() {
+    float v = 3.0;
+    RDI_begin();
+    set_voltage(v);
+    RDI_end();
+}",RDI burst usage,"Changes 'v' value from 3.0 v to -2.0v"
