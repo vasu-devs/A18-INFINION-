@@ -18,10 +18,14 @@ USB_DIR = PROJECT_ROOT / "usb"
 MCP_SERVER_DIR = USB_DIR / "server"
 
 # ─── LLM Configuration ──────────────────────────────────────────────────────
-# Primary: Groq (fast inference, free tier)
-# Fallback: Gemini Flash
-LLM_PROVIDER = os.getenv("LLM_PROVIDER", "groq")
-LLM_FALLBACK_PROVIDER = os.getenv("LLM_FALLBACK_PROVIDER", "gemini")
+# Primary: DeepSeek V3 (5M tokens, generous free tier)
+# Fallback: Groq
+LLM_PROVIDER = os.getenv("LLM_PROVIDER", "deepseek")
+LLM_FALLBACK_PROVIDER = os.getenv("LLM_FALLBACK_PROVIDER", "groq")
+
+DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
+DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
+DEEPSEEK_BASE_URL = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")

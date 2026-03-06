@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 # Track request timestamps for throttling
 _last_request_time: float = 0.0
-_MIN_REQUEST_INTERVAL = 4.0  # seconds between requests (15 RPM = 4s/req)
+_MIN_REQUEST_INTERVAL = 5.0  # seconds between requests (DeepSeek has generous limits)
 
 
 async def call_llm(
@@ -75,8 +75,8 @@ async def _call_with_retry(
     system_prompt: str,
     json_mode: bool,
     temperature: float,
-    max_retries: int = 3,
-    initial_delay: float = 10.0,
+    max_retries: int = 5,
+    initial_delay: float = 15.0,
 ) -> str:
     """Call a provider with exponential backoff retry on 429/rate-limit errors."""
     last_error = None
@@ -109,7 +109,9 @@ async def _call_provider(
     temperature: float,
 ) -> str:
     """Route to the correct provider implementation."""
-    if provider == "gemini":
+    if provider == "deepseek":
+        return await _call_deepseek(prompt, system_prompt, json_mode, temperature)
+    elif provider == "gemini":
         return await _call_gemini(prompt, system_prompt, json_mode, temperature)
     elif provider == "groq":
         return await _call_groq(prompt, system_prompt, json_mode, temperature)
@@ -121,7 +123,42 @@ async def _call_provider(
         raise ValueError(f"Unknown LLM provider: {provider}")
 
 
-# ─── Gemini (Primary) ───────────────────────────────────────────────────────
+# ─── DeepSeek (Primary) ──────────────────────────────────────────────────
+
+async def _call_deepseek(
+    prompt: str,
+    system_prompt: str,
+    json_mode: bool,
+    temperature: float,
+) -> str:
+    """Call the DeepSeek API (OpenAI-compatible, 5M tokens free)."""
+    from openai import AsyncOpenAI
+
+    client = AsyncOpenAI(
+        api_key=config.DEEPSEEK_API_KEY,
+        base_url=config.DEEPSEEK_BASE_URL,
+    )
+
+    kwargs: dict = {
+        "model": config.DEEPSEEK_MODEL,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": prompt},
+        ],
+        "temperature": temperature,
+        "max_tokens": 2000,
+    }
+
+    if json_mode:
+        kwargs["response_format"] = {"type": "json_object"}
+
+    response = await client.chat.completions.create(**kwargs)
+    content = response.choices[0].message.content or ""
+    logger.debug(f"DeepSeek response ({len(content)} chars)")
+    return content
+
+
+# ─── Gemini ──────────────────────────────────────────────────────────────────
 
 async def _call_gemini(
     prompt: str,
