@@ -141,58 +141,58 @@ class BugDescriberAgent:
         
         return first_line if len(first_line) < 200 else first_line[:200]
     
-    async def _generate_llm_explanation(
+    async def describe_all(
         self,
-        detection: DetectionResult,
+        detections: list[DetectionResult],
         parsed_code: ParsedCode,
         context: Optional[str],
         mcp_patterns: list[BugPattern],
-        correct_code: Optional[str],
     ) -> str:
         """
-        Use an LLM to generate a clear explanation of the bug.
+        Generate ONE unified plain-English explanation covering ALL detected bugs.
         """
         try:
-            # Get the buggy line content
-            buggy_line = parsed_code.get_line(detection.bug_line)
-            buggy_line_content = buggy_line.content if buggy_line else "N/A"
+            # Build a summary of all bugs found
+            bug_summaries = []
+            for det in detections:
+                line = parsed_code.get_line(det.bug_line)
+                line_content = line.content.strip() if line else "N/A"
+                bug_summaries.append(
+                    f"Line {det.bug_line}: `{line_content}` — {det.raw_reasoning[:200]}"
+                )
+            
+            bugs_text = "\n".join(bug_summaries)
             
             prompt_parts = [
-                "Generate a CONCISE, clear explanation of the bug in this C++ code.",
+                "Write ONE cohesive plain-English explanation that discusses EVERY identified bug listed below.",
                 "",
-                f"**Bug location**: Line {detection.bug_line}: `{buggy_line_content}`",
-                f"**Detection method**: {detection.detection_method}",
-                f"**Bug type**: {detection.bug_type}",
+                f"Bugs found:",
+                bugs_text,
             ]
             
             if context:
-                prompt_parts.append(f"**Code context**: {context}")
-            
-            if detection.raw_reasoning:
-                prompt_parts.append(f"**Analysis notes**: {detection.raw_reasoning[:500]}")
-            
-            if correct_code:
-                prompt_parts.append(f"\n**Correct version of the code**:\n```cpp\n{correct_code}\n```")
-            
-            if mcp_patterns:
-                patterns_text = "; ".join(
-                    f"{p.context}: {p.description}" for p in mcp_patterns if p.description
-                )
-                prompt_parts.append(f"\n**Known bug patterns**: {patterns_text}")
+                prompt_parts.append(f"\nContext: {context}")
             
             prompt_parts.extend([
                 "",
-                "Requirements:",
-                "- Keep the explanation to 1-2 sentences maximum",
-                "- Be specific about what is wrong and what it should be",
-                "- Reference the bug manual patterns if they apply",
-                "- Do NOT include the line number in your explanation",
-                "- Do NOT include any JSON formatting, just the plain text explanation",
+                "Rules:",
+                "- ONE paragraph, max 4 sentences total",
+                "- Discuss EVERY bug listed above specifically — do not skip any",
+                "- Use terms like 'Additionally', 'Furthermore', or 'Also' to transition between bugs",
+                "- Plain English only, NO code snippets, NO function signatures",
+                "- NO tags like 'BUG:' or labels",
+                "- Do NOT mention line numbers",
+                "- Describe exactly WHAT is wrong for each point",
+                "",
+                "Good examples:",
+                "The vector editing mode uses the wrong constant and should use VTT mode instead of VECD mode. Additionally, the write operation is performed inside an execute block when it should be outside.",
+                "Three function names are misspelled and should use the standard getter names for vector, value, and waveform. Furthermore, the pin identifier used for retrieval does not match the initialization.",
+                "The clamp values are in the wrong order and the voltage exceeds the allowed range for this card type. Also, the required initialization command is missing before performing the force operation.",
             ])
             
             response = await call_llm(
                 prompt="\n".join(prompt_parts),
-                system_prompt="You are a concise C++ code reviewer. Generate short, clear bug explanations.",
+                system_prompt="You write brief, accurate plain English bug descriptions. No code, no tags. Cover every issue mentioned.",
                 json_mode=False,
                 temperature=0.2,
             )
@@ -200,15 +200,26 @@ class BugDescriberAgent:
             # Clean up the response
             explanation = response.strip().strip('"').strip("'")
             
-            # Ensure it's not too long
-            if len(explanation) > 300:
-                explanation = explanation[:297] + "..."
+            # Strip any BUG: tags
+            import re
+            explanation = re.sub(r'^BUG:\s*\w+[\s\-–:]*', '', explanation, flags=re.IGNORECASE).strip()
+            
+            # Take first 2-3 sentences only
+            sentences = re.split(r'(?<=[.!?])\s+', explanation)
+            explanation = ' '.join(sentences[:3])
+            
+            # Cap length
+            if len(explanation) > 250:
+                explanation = explanation[:247] + "..."
             
             return explanation
             
         except Exception as e:
             logger.error(f"[Describer] LLM explanation failed: {e}")
-            # Fallback to raw reasoning
-            if detection.raw_reasoning:
-                return detection.raw_reasoning.split("\n")[0][:200]
-            return f"Bug detected at line {detection.bug_line} ({detection.bug_type})"
+            # Fallback: combine raw reasoning
+            parts = []
+            for det in detections:
+                r = det.raw_reasoning.split("\n")[0][:80] if det.raw_reasoning else f"Bug at line {det.bug_line}"
+                parts.append(r)
+            return "; ".join(parts)[:250]
+

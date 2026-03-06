@@ -1,0 +1,41 @@
+ID,Bug Line,Explanation
+16,3,"This function can only work with runtime data. It cannot be put into
+RDI_BEGIN/RDI_END() because it can only edit vector data and cannot execute vectors.
+It does not support insertSub().
+Supported runtime commands
+Function Data type More information
+writeVec(string rtv, int vecPos) vector <ARRAY_I>: Different
+vectors per site.
+rdi.smartVec().writeVec()
+ARRAY_I: The same vector on all
+sites.
+writeBit(string rtv, int bitPos)
+expectBit(string rtv, int bitPos)
+vector <ARRAY_I>: Different
+bitStream p"
+32,3,Bug: Using `.burst()` instead of `.execute()` to run the burst label 'MPBurst2'. The line should end with `.execute()` to properly trigger the burst execution.
+25,6,"The bug is incorrectly passing raw string ""data"" directly to write() instead of using a runtime variable name registered with runTimeVal(). The API expects a registered runtime variable name, not literal data."
+10,4,BUG: Wrong function called - using getHumanSeniority() instead of getHumSensor() to read humidity from cache.
+26,8,"**Bug**: Invalid action sequence - `iMeas()` called after `repeat(2)` when it should be part of the measurement actions group before any repeat operations.  
+
+**Fix**: Move `iMeas()` before `repeat(2)` to maintain proper force/clamp -> measurement action ordering."
+23,7,"Missing closing quote in smartVec ID string - should be `rdi.smartVec(""id"")` instead of `rdi.smartVec(""id)`"
+4,3,BUG: Incorrect parameter order - vForce() called before iForceRange() when setting up DC Scale pins. The RDI API requires force range settings before force/clamp values.
+31,2,Calling burst() on a vector<string> vec_port1 which doesn't have this method. Should use rdi.func().burst() instead for burst operations.
+17,8,BUG: Missing pin parameter in getFFC() call - needs pin name like 'pB' as specified in RDI API docs.
+27,2,BUG: Invalid current range syntax - '100 uA' should be written as '100e-6' for microamps in iMeasRange()
+24,6,BUG: Pin name mismatch - using 'DO' (letter O) in getVector() when digCap() was configured with 'D0' (digit zero)
+14,8,BUG: Trying to get alarm burst values for pin 'AVI' when measurements were only done on 'dig' pin. Alarm results can only be retrieved for pins that were actually measured in the same RDI block.
+9,2,"BUG: System-reserved waiting in cogo is misplaced - the wait() call should be between begin() and end(), not right before end()."
+13,3,BUG: Typo in function name — 'getVesjkctor()' should be 'getVector()' per RDI API docs
+22,7,"Missing readTempThresh() call before getTempThresh(). Must update hardware cache first to get current threshold value.""
+
+This concisely:
+1. Identifies the missing API call
+2. Explains why it's needed (cache update)
+3. Focuses on the core issue without technical jargon"
+29,4,API called inside RDI_BEGIN/RDI_END block when it must be used outside. The retrievePmuxPinStatus() function should not be called within this block according to documentation.
+2,3,vForceRange set to 35V exceeds AVI64 enhanced accuracy specs - should use a lower voltage range for precision measurements.
+20,4,Missing semicolon after rdi.digCap(1) statement - C++ requires semicolons to terminate statements.
+11,2,Missing average() call in current measurement chain - iMeans() requires explicit sample count specification for accurate ADC-based measurements.
+3,4,"Syntax error in method chaining - missing semicolons between pin configuration calls for vForce, vForceRange, iForceRange, and iClamp."

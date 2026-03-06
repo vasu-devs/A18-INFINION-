@@ -96,10 +96,12 @@ def write_output_csv(results: list[PipelineOutput], filepath: str | Path) -> Non
     filepath.parent.mkdir(parents=True, exist_ok=True)
     
     with open(filepath, "w", newline="", encoding="utf-8") as f:
-        writer = csv.writer(f)
+        writer = csv.writer(f, quoting=csv.QUOTE_ALL)
         writer.writerow(["ID", "Bug Line", "Explanation"])
         for result in results:
-            writer.writerow([result.id, result.bug_line, result.explanation])
+            # Ensure bug_line is always a string (even single values)
+            bug_line_str = str(result.bug_line)
+            writer.writerow([result.id, bug_line_str, result.explanation])
     
     logger.info(f"Wrote {len(results)} results to {filepath}")
 

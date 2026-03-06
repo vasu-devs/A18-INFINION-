@@ -68,7 +68,7 @@ def main() -> None:
     parser.add_argument(
         "--provider", "-p",
         type=str,
-        choices=["openai", "gemini", "ollama"],
+        choices=["openai", "gemini", "ollama", "deepseek", "groq"],
         default=None,
         help="LLM provider to use (overrides .env config)",
     )
@@ -83,6 +83,11 @@ def main() -> None:
         action="store_true",
         help="Enable verbose (DEBUG) logging",
     )
+    parser.add_argument(
+        "--test-mode", "-t",
+        action="store_true",
+        help="Test mode: ignores Correct Code and Explanation columns (simulates real test set)",
+    )
     
     args = parser.parse_args()
     
@@ -90,14 +95,22 @@ def main() -> None:
     if args.provider:
         config.LLM_PROVIDER = args.provider
     if args.model:
-        if config.LLM_PROVIDER == "openai":
+        provider = config.LLM_PROVIDER.lower()
+        if provider == "openai":
             config.OPENAI_MODEL = args.model
-        elif config.LLM_PROVIDER == "gemini":
+        elif provider == "gemini":
             config.GEMINI_MODEL = args.model
-        elif config.LLM_PROVIDER == "ollama":
+        elif provider == "ollama":
             config.OLLAMA_MODEL = args.model
+        elif provider == "deepseek":
+            config.DEEPSEEK_MODEL = args.model
+        elif provider == "groq":
+            config.GROQ_MODEL = args.model
     if args.verbose:
         config.LOG_LEVEL = "DEBUG"
+    if args.test_mode:
+        # Disable diff detection — test set won't have correct code
+        config.ENABLE_DIFF_DETECTION = False
     
     # Setup logging
     setup_logging()
@@ -107,6 +120,9 @@ def main() -> None:
     logger.info(f"LLM Provider: {config.LLM_PROVIDER} ({_get_model_name()})")
     logger.info(f"Input: {args.input}")
     logger.info(f"Output: {args.output}")
+    if args.test_mode:
+        logger.info("🧪 TEST MODE: Ignoring Correct Code & Explanation (pure LLM + MCP)")
+        config.ENABLE_DIFF_DETECTION = False
     
     # Validate input file exists
     input_path = Path(args.input)
@@ -121,6 +137,7 @@ def main() -> None:
         results = asyncio.run(orchestrator.run(
             input_path=str(input_path),
             output_path=args.output,
+            test_mode=args.test_mode,
         ))
         
         # Print summary
@@ -128,7 +145,7 @@ def main() -> None:
         print(f"📊 Results Summary ({len(results)} snippets)")
         print(f"{'─' * 50}")
         for r in results:
-            print(f"  ID={r.id:>3} │ Line={r.bug_line:>3} │ {r.explanation[:60]}")
+            print(f"  ID={r.id:>3} │ Line={r.bug_line:>5} │ {r.explanation[:60]}")
         print(f"{'─' * 50}")
         print(f"💾 Output saved to: {args.output}")
         
@@ -149,6 +166,10 @@ def _get_model_name() -> str:
         return config.GEMINI_MODEL
     elif provider == "ollama":
         return config.OLLAMA_MODEL
+    elif provider == "deepseek":
+        return config.DEEPSEEK_MODEL
+    elif provider == "groq":
+        return config.GROQ_MODEL
     return "unknown"
 
 

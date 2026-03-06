@@ -84,5 +84,5 @@ class PipelineInput(BaseModel):
 class PipelineOutput(BaseModel):
     """A single row of the output CSV — the detection result."""
     id: int = Field(..., description="Code ID (matches input)")
-    bug_line: int = Field(..., description="Exact line number containing the bug")
-    explanation: str = Field(..., description="Generated explanation of the bug's nature")
+    bug_line: str = Field(..., description="Line number(s) containing bugs, comma-separated if multiple")
+    explanation: str = Field(..., description="Generated explanation(s) of the bugs")

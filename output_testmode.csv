@@ -1,0 +1,29 @@
+ID,Bug Line,Explanation
+16,3,"BUG: Runtime Operation Restriction - writeData() called inside RDI_BEGIN()/RDI_END() block, runtime vector edits must be outside RDI blocks"
+32,3,"BUG: Missing Execution Call - Multi-port burst missing .execute() at end, should be rdi.port(TA::MULTI_PORT).func().burst(""MPBurst2"").burst().execute()"
+25,6,"BUG: API Usage - write() expects numeric/array data but received string ""data"", should use write_data variable instead"
+10,2,"BUG: Syntax Error - module(""02"") has mismatched quotes, should use consistent quotes like module(""02"")"
+26,8,"BUG: API Sequence Error - iMeas() called after repeat(2), should be called before adding waveforms or setting repeat counts"
+23,25,BUG: Syntax Order - rdi.burstUpload.smartVec().end() should be rdi.smartVec().burstUpload().end()
+4,3,"BUG: Method Order - vForce() called before iClamp(), should follow order: force mode, force range, force/clamp after pin()"
+31,5,"BUG: Invalid Method - push_forward() is not a valid vector method, should use push_back() instead"
+17,8,"BUG: API Mismatch - Using getFFC() after FFV(10) setup, should use getFFV() with pin parameter"
+27,5,"BUG: Missing Measurement Setup - iMeas() called without prior iMeasRange() specification, should set measurement range before calling iMeas()"
+24,6,BUG: Pin Name Mismatch - Using pin name 'DO' should be 'D0' to match digital capture setup
+14,7,"BUG: Missing Parameter - getAlarmValue() requires pin name parameter, should be getAlarmValue(""pinName"")"
+9,3,"System-reserved waiting in cogo
+The system needs a waiting time to make the judgment. This waiting time lies between
+the judgment pattern and the jump at the end of the cogo execution. This waiting time
+is not a fixed value and it depends on its environment.
+You can put your own rdi.wait() function before cogo().node().end(). If you use
+rdi.cogo().wait(double) in your code, SmartRDI can check whether this waiting
+time is long enough for the system-reserved waiting.
+Example:
+Note  If there are an"
+13,3,BUG: Function Name Typo - getVesjkctor() should be getVector()
+22,7,"BUG: Incorrect API Usage - getTempThresh() called outside RDI_BEGIN/RDI_END block, should be wrapped in RDI_BEGIN/RDI_END"
+29,4,BUG: Incorrect Block Usage - rdi.route().retrievePmuxPinStatus() must be used outside the RDI_BEGIN/RDI_END block.
+2,3,BUG: Voltage Range Exceeded - vForceRange(35 V) exceeds AVI64's maximum safe voltage (30 V)
+20,4,BUG: Syntax Error - Missing semicolon at end of statement 'rdi.digCap(1)
+11,2,"BUG: Syntax Error - Unit format '2 mAh' is incorrect, should be '2 mA' or proper API-specified unit format"
+3,2,BUG: Syntax Error - Missing opening parenthesis '(' in rdi.alarm().pin(m_rMcd.sP_VS).enable(true) statement

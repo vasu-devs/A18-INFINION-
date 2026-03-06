@@ -35,9 +35,9 @@ class BugDetectorAgent:
         context: Optional[str],
         mcp_patterns: list[BugPattern],
         documentation_context: str = "",
-    ) -> DetectionResult:
+    ) -> list[DetectionResult]:
         """
-        Run all detection layers and return the best result.
+        Run all detection layers and return ALL detected bugs.
         
         Args:
             parsed_code: Structured parsed code from Code Parser Agent.
@@ -46,7 +46,7 @@ class BugDetectorAgent:
             mcp_patterns: Known bug patterns from MCP Lookup Agent.
         
         Returns:
-            DetectionResult with the identified bug line and metadata.
+            List of DetectionResults for all bugs found.
         """
         candidates: list[DetectionResult] = []
         
@@ -66,28 +66,46 @@ class BugDetectorAgent:
                 logger.info(f"[Pattern] Detected bug at line {pattern_result.bug_line} "
                            f"(confidence: {pattern_result.confidence:.2f})")
         
-        # ─── Layer 3: LLM analysis ──────────────────────────────────
+        # ─── Layer 3: LLM analysis (returns ALL bugs) ────────────────
         if config.ENABLE_LLM_DETECTION:
-            llm_result = await self._detect_via_llm(
+            llm_results = await self._detect_via_llm(
                 parsed_code, correct_code, context, mcp_patterns, documentation_context
             )
-            if llm_result:
-                candidates.append(llm_result)
-                logger.info(f"[LLM] Detected bug at line {llm_result.bug_line} "
-                           f"(confidence: {llm_result.confidence:.2f})")
+            if llm_results:
+                for r in llm_results:
+                    candidates.append(r)
+                    logger.info(f"[LLM] Detected bug at line {r.bug_line} "
+                               f"(confidence: {r.confidence:.2f})")
         
-        # ─── Ensemble: select best result ────────────────────────────
+        # ─── Deduplicate by line number ────────────────────────────
         if not candidates:
             logger.warning("No detection layer produced a result. Defaulting to line 1.")
-            return DetectionResult(
+            return [DetectionResult(
                 bug_line=1,
                 bug_type="unknown",
                 confidence=0.0,
                 detection_method="none",
                 raw_reasoning="No detection layer could identify the bug.",
-            )
+            )]
         
-        return self._select_best(candidates)
+        # Deduplicate: keep highest-confidence result per line
+        by_line: dict[int, DetectionResult] = {}
+        for c in candidates:
+            if c.bug_line not in by_line or c.confidence > by_line[c.bug_line].confidence:
+                by_line[c.bug_line] = c
+        
+        # Filter out low-confidence detections
+        MIN_CONFIDENCE = 0.70
+        filtered = {line: r for line, r in by_line.items() if r.confidence >= MIN_CONFIDENCE}
+        
+        if not filtered:
+            # If all filtered out, keep the single highest-confidence one
+            best = max(by_line.values(), key=lambda r: r.confidence)
+            filtered = {best.bug_line: best}
+        
+        results = sorted(filtered.values(), key=lambda r: r.bug_line)
+        logger.info(f"Total unique bugs found: {len(results)} at lines {[r.bug_line for r in results]}")
+        return results
     
     # ─── Layer 1: Diff Detection ─────────────────────────────────────────────
     
@@ -186,20 +204,21 @@ class BugDetectorAgent:
         context: Optional[str],
         mcp_patterns: list[BugPattern],
         documentation_context: str = "",
-    ) -> Optional[DetectionResult]:
+    ) -> list[DetectionResult]:
         """
-        Use an LLM to analyze the code and identify the buggy line.
+        Use an LLM to analyze the code and identify ALL buggy lines.
         
-        Constructs a detailed prompt with code, context, and known patterns,
-        and asks the LLM to identify the exact line number.
+        Returns a list of DetectionResult (one per bug found).
         """
         try:
             prompt = self._build_llm_prompt(parsed_code, correct_code, context, mcp_patterns, documentation_context)
             
             system_prompt = (
-                "You are an expert C++ code reviewer specializing in bug detection. "
-                "Your task is to analyze C++ code snippets and identify the EXACT line "
-                "number that contains a bug. You must respond ONLY with valid JSON."
+                "You are an expert RDI/SmartRDI C++ API reviewer. "
+                "Your task is to find lines that contain REAL bugs — wrong function names, "
+                "wrong parameter values, wrong argument order, wrong API usage, inverted lifecycle, "
+                "or misspelled identifiers. Do NOT flag correct code, comments, or style issues. "
+                "Be VERY selective — only flag genuine errors. Respond ONLY with valid JSON."
             )
             
             response = await call_llm(
@@ -211,26 +230,36 @@ class BugDetectorAgent:
             
             data = parse_json_response(response)
             
-            bug_line = int(data.get("bug_line", data.get("line_number", 1)))
-            reasoning = data.get("reasoning", data.get("explanation", ""))
-            bug_type = data.get("bug_type", "llm_detected")
-            confidence_raw = data.get("confidence", 0.7)
+            # Handle both single-bug and multi-bug responses
+            bugs_list = data.get("bugs", None)
+            if bugs_list is None:
+                # Fallback: single-bug format
+                bugs_list = [data]
             
-            # Validate line number is within range
-            if bug_line < 1 or bug_line > parsed_code.total_lines:
-                logger.warning(
-                    f"[LLM] Returned line {bug_line} outside range [1, {parsed_code.total_lines}]. "
-                    f"Clamping."
-                )
-                bug_line = max(1, min(bug_line, parsed_code.total_lines))
+            results = []
+            for bug in bugs_list:
+                bug_line = int(bug.get("bug_line", bug.get("line_number", 1)))
+                reasoning = bug.get("reasoning", bug.get("explanation", ""))
+                bug_type = bug.get("bug_type", "llm_detected")
+                confidence_raw = bug.get("confidence", 0.7)
+                
+                # Validate line number is within range
+                if bug_line < 1 or bug_line > parsed_code.total_lines:
+                    logger.warning(
+                        f"[LLM] Returned line {bug_line} outside range [1, {parsed_code.total_lines}]. "
+                        f"Clamping."
+                    )
+                    bug_line = max(1, min(bug_line, parsed_code.total_lines))
+                
+                results.append(DetectionResult(
+                    bug_line=bug_line,
+                    bug_type=bug_type,
+                    confidence=min(float(confidence_raw), 0.90),
+                    detection_method="llm",
+                    raw_reasoning=reasoning,
+                ))
             
-            return DetectionResult(
-                bug_line=bug_line,
-                bug_type=bug_type,
-                confidence=min(float(confidence_raw), 0.90),  # Cap LLM confidence
-                detection_method="llm",
-                raw_reasoning=reasoning,
-            )
+            return results if results else None
         except Exception as e:
             logger.error(f"[LLM] Detection failed: {e}")
             return None
@@ -246,7 +275,27 @@ class BugDetectorAgent:
         """Build the LLM prompt for bug detection."""
         sections = []
         
-        sections.append("## Task\nAnalyze the following C++ code snippet and identify the EXACT line number that contains a bug.\n")
+        # Task description — highly specific for RDI API
+        sections.append(
+            '## Task\n'
+            'Analyze the C++ RDI/SmartRDI API code and find lines that contain REAL bugs.\n\n'
+            'A REAL bug is ONE of these:\n'
+            '- **Wrong/misspelled function name** (e.g. getMeans instead of getMeas, getFFC instead of getFFV)\n'
+            '- **Wrong parameter value** (e.g. voltage exceeds allowed range, wrong mode constant)\n'
+            '- **Swapped/reversed arguments** (e.g. iClamp(high, low) instead of iClamp(low, high))\n'
+            '- **Wrong method** (e.g. write() instead of execute(), read() instead of execute())\n'
+            '- **Inverted lifecycle** (e.g. RDI_END before RDI_BEGIN, or functions called outside their block)\n'
+            '- **Missing required parameter** (e.g. getAlarmValue() without pin name)\n'
+            '- **Wrong variable name** (e.g. using vec_port2 when vec_port1 was declared)\n'
+            '- **Wrong method name** (e.g. push_forward instead of push_back, burst() on non-burst object)\n'
+            '- **Pin name mismatch** (e.g. D0 vs DO — digit zero vs letter O)\n'
+            '- **Wrong casing** (e.g. imeasRange instead of iMeasRange)\n\n'
+            'NOT a bug:\n'
+            '- Comments, blank lines, or variable declarations\n'
+            '- Correct execute() calls, correct RDI_BEGIN/END pairs\n'
+            '- Lines that are simply part of a multi-line method chain and are themselves correct\n'
+            '- Style preferences or formatting\n'
+        )
         
         # Code with line numbers
         sections.append(f"## Code (with line numbers)\n```cpp\n{parsed_code.get_numbered_code()}\n```\n")
@@ -274,12 +323,14 @@ class BugDetectorAgent:
         # Output format instruction
         sections.append(
             '## Output\n'
-            'Respond with a JSON object containing:\n'
-            '- `bug_line`: The exact 1-indexed line number containing the bug (integer)\n'
-            '- `bug_type`: A short category for the bug type (string)\n'
-            '- `reasoning`: A clear explanation of what the bug is and why this line is problematic (string)\n'
-            '- `confidence`: Your confidence level from 0.0 to 1.0 (number)\n\n'
-            'Example: {"bug_line": 5, "bug_type": "naming_error", "reasoning": "Function RDI_begin() should be RDI_END()", "confidence": 0.9}\n'
+            'Respond with a JSON object containing a `bugs` array. ONLY include lines you are VERY confident contain a real bug.\n'
+            'Each bug has:\n'
+            '- `bug_line`: The exact 1-indexed line number (integer)\n'
+            '- `bug_type`: A short category (string)\n'
+            '- `reasoning`: Brief explanation of the bug (string)\n'
+            '- `confidence`: Confidence 0.0-1.0 — ONLY include bugs with confidence >= 0.80 (number)\n\n'
+            'IMPORTANT: Do NOT include lines that look correct. Be precise.\n'
+            'Example: {"bugs": [{"bug_line": 3, "bug_type": "wrong_function", "reasoning": "getFFC should be getFFV", "confidence": 0.95}]}\n'
         )
         
         return "\n".join(sections)

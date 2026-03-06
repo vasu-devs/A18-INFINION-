@@ -49,6 +49,7 @@ class Orchestrator:
         self,
         input_path: Optional[str] = None,
         output_path: Optional[str] = None,
+        test_mode: bool = False,
     ) -> list[PipelineOutput]:
         """
         Run the full bug detection pipeline.
@@ -78,6 +79,13 @@ class Orchestrator:
             raise
         
         logger.info(f"Loaded {len(inputs)} code snippets to analyze")
+        
+        # In test mode, strip correct_code and explanation (won't exist in real test set)
+        if test_mode:
+            logger.info("🧪 TEST MODE: Stripping Correct Code & Explanation from all snippets")
+            for inp in inputs:
+                inp.correct_code = None
+                inp.explanation = None
         
         # Step 2: Start and connect to MCP server
         logger.info("Starting MCP server...")
@@ -134,7 +142,7 @@ class Orchestrator:
             snippet: A single PipelineInput row from the dataset.
         
         Returns:
-            PipelineOutput with detection results.
+            PipelineOutput with detection results (comma-separated for multi-bug).
         """
         # Agent 2: Parse the code
         logger.debug(f"  [Parser] Parsing code...")
@@ -150,9 +158,9 @@ class Orchestrator:
                 snippet.code, snippet.context
             )
         
-        # Agent 4: Detect the bug
+        # Agent 4: Detect ALL bugs
         logger.debug(f"  [Detector] Running detection layers...")
-        detection = await self.bug_detector.detect(
+        detections = await self.bug_detector.detect(
             parsed_code=parsed_code,
             correct_code=snippet.correct_code,
             context=snippet.context,
@@ -160,18 +168,18 @@ class Orchestrator:
             documentation_context=documentation_context,
         )
         
-        # Agent 5: Generate explanation
-        logger.debug(f"  [Describer] Generating explanation...")
-        description = await self.bug_describer.describe(
-            detection=detection,
+        # Agent 5: Generate ONE unified explanation for ALL bugs
+        bug_lines = [str(d.bug_line) for d in detections]
+        logger.debug(f"  [Describer] Generating unified explanation for lines {bug_lines}...")
+        explanation = await self.bug_describer.describe_all(
+            detections=detections,
             parsed_code=parsed_code,
             context=snippet.context,
             mcp_patterns=mcp_patterns,
-            correct_code=snippet.correct_code,
         )
         
         return PipelineOutput(
             id=snippet.id,
-            bug_line=detection.bug_line,
-            explanation=description.explanation,
+            bug_line=",".join(bug_lines),
+            explanation=explanation,
         )
