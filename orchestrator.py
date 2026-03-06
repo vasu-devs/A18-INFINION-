@@ -168,6 +168,15 @@ class Orchestrator:
             documentation_context=documentation_context,
         )
         
+        # ── Line-number safety net ─────────────────────────────────
+        # Ensure every bug_line is strictly 1-indexed before CSV output.
+        for det in detections:
+            if det.bug_line < 1:
+                logger.warning(
+                    f"  [Safety] bug_line={det.bug_line} is <1. Correcting to 1."
+                )
+                det.bug_line = 1
+        
         # Agent 5: Generate ONE unified explanation for ALL bugs
         bug_lines = [str(d.bug_line) for d in detections]
         logger.debug(f"  [Describer] Generating unified explanation for lines {bug_lines}...")

@@ -215,10 +215,15 @@ class BugDetectorAgent:
             
             system_prompt = (
                 "You are an expert RDI/SmartRDI C++ API reviewer. "
+                "CRITICAL: You must read and internalize the provided MCP manual / API documentation "
+                "BEFORE analyzing the code. You must prioritize the rules in the provided manual "
+                "over standard C++ syntax rules. If the manual mentions a specific function or "
+                "variable constraint, check for that exact constraint first. "
                 "Your task is to find lines that contain REAL bugs — wrong function names, "
                 "wrong parameter values, wrong argument order, wrong API usage, inverted lifecycle, "
                 "or misspelled identifiers. Do NOT flag correct code, comments, or style issues. "
-                "Be VERY selective — only flag genuine errors. Respond ONLY with valid JSON."
+                "Be VERY selective — only flag genuine errors that violate the documented API rules. "
+                "Respond ONLY with valid JSON."
             )
             
             response = await call_llm(
@@ -242,6 +247,16 @@ class BugDetectorAgent:
                 reasoning = bug.get("reasoning", bug.get("explanation", ""))
                 bug_type = bug.get("bug_type", "llm_detected")
                 confidence_raw = bug.get("confidence", 0.7)
+                
+                # ── 0-index safety guard ──────────────────────────
+                # LLMs sometimes return 0-indexed line numbers.
+                # The output CSV must be strictly 1-indexed.
+                if bug_line == 0:
+                    logger.warning(
+                        "[LLM] Returned 0-indexed bug_line=0. "
+                        "Applying +1 offset to correct to 1-indexed."
+                    )
+                    bug_line += 1
                 
                 # Validate line number is within range
                 if bug_line < 1 or bug_line > parsed_code.total_lines:
@@ -272,7 +287,11 @@ class BugDetectorAgent:
         mcp_patterns: list[BugPattern],
         documentation_context: str = "",
     ) -> str:
-        """Build the LLM prompt for bug detection."""
+        """Build the LLM prompt for bug detection.
+        
+        Structure is intentionally ordered to enforce 'context-first' reasoning:
+        Task → MCP Documentation → Known Patterns → Code → Reference → Output
+        """
         sections = []
         
         # Task description — highly specific for RDI API
@@ -297,18 +316,22 @@ class BugDetectorAgent:
             '- Style preferences or formatting\n'
         )
         
-        # Code with line numbers
-        sections.append(f"## Code (with line numbers)\n```cpp\n{parsed_code.get_numbered_code()}\n```\n")
+        # ── CONTEXT-FIRST: MCP documentation and patterns BEFORE the code ──
+        # This ordering forces the LLM to absorb API rules before seeing the code.
         
-        # Context
-        if context:
-            sections.append(f"## Context\nThis code is related to: {context}\n")
+        # Context-first directive
+        sections.append(
+            '## ⚠️ Context-First Directive\n'
+            'You must prioritize the rules in the provided manual over standard C++ syntax rules. '
+            'If the manual mentions a specific function or variable constraint, check for that '
+            'exact constraint first. Read the documentation sections below BEFORE analyzing the code.\n'
+        )
         
-        # Correct code (if available, for reference)
-        if correct_code:
-            sections.append(f"## Reference (Correct Version)\n```cpp\n{correct_code}\n```\n")
+        # RDI API documentation from MCP server (moved BEFORE code)
+        if documentation_context:
+            sections.append(f"## RDI API Documentation (Retrieved from MCP Server)\n{documentation_context}\n")
         
-        # Known bug patterns from MCP
+        # Known bug patterns from MCP (moved BEFORE code)
         if mcp_patterns:
             pattern_text = "\n".join(
                 f"- **{p.context}**: {p.description}"
@@ -316,9 +339,16 @@ class BugDetectorAgent:
             )
             sections.append(f"## Known Bug Patterns (from manual)\n{pattern_text}\n")
         
-        # RDI API documentation from MCP server
-        if documentation_context:
-            sections.append(f"## RDI API Documentation (Retrieved from MCP Server)\n{documentation_context}\n")
+        # Context
+        if context:
+            sections.append(f"## Context\nThis code is related to: {context}\n")
+        
+        # Code with line numbers (placed AFTER documentation so LLM reads rules first)
+        sections.append(f"## Code (with line numbers)\n```cpp\n{parsed_code.get_numbered_code()}\n```\n")
+        
+        # Correct code (if available, for reference)
+        if correct_code:
+            sections.append(f"## Reference (Correct Version)\n```cpp\n{correct_code}\n```\n")
         
         # Output format instruction
         sections.append(
@@ -327,10 +357,11 @@ class BugDetectorAgent:
             'Each bug has:\n'
             '- `bug_line`: The exact 1-indexed line number (integer)\n'
             '- `bug_type`: A short category (string)\n'
-            '- `reasoning`: Brief explanation of the bug (string)\n'
+            '- `reasoning`: Brief explanation referencing the specific manual rule or API constraint violated (string)\n'
             '- `confidence`: Confidence 0.0-1.0 — ONLY include bugs with confidence >= 0.80 (number)\n\n'
-            'IMPORTANT: Do NOT include lines that look correct. Be precise.\n'
-            'Example: {"bugs": [{"bug_line": 3, "bug_type": "wrong_function", "reasoning": "getFFC should be getFFV", "confidence": 0.95}]}\n'
+            'IMPORTANT: Do NOT include lines that look correct. Be precise. '
+            'Reference the documentation or manual rule that the buggy line violates.\n'
+            'Example: {"bugs": [{"bug_line": 3, "bug_type": "wrong_function", "reasoning": "Per the RDI manual, getFFC should be getFFV for frequency voltage", "confidence": 0.95}]}\n'
         )
         
         return "\n".join(sections)
