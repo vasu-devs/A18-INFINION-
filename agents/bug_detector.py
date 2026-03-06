@@ -1,10 +1,9 @@
 """
 Bug Detector Agent — the core intelligence that identifies buggy lines.
 
-Uses a 3-layer detection strategy:
-  Layer 1: Diff-based detection (highest confidence, when correct code available)
-  Layer 2: Pattern matching against MCP bug manual
-  Layer 3: LLM-powered code analysis (for unknown/novel bugs)
+Uses a 2-layer detection strategy:
+  Layer 1: Pattern matching against MCP bug manual
+  Layer 2: LLM-powered code analysis (for unknown/novel bugs)
 """
 
 from __future__ import annotations
@@ -13,7 +12,6 @@ import re
 from typing import Optional
 
 from models.schemas import ParsedCode, BugPattern, DetectionResult
-from utils.diff_utils import find_primary_bug_line, compute_line_diff, generate_diff_summary
 from utils.llm_client import call_llm, parse_json_response
 import config
 
@@ -24,14 +22,13 @@ class BugDetectorAgent:
     """
     Agent 4 — Multi-layered bug detector.
     
-    Combines diff analysis, pattern matching, and LLM reasoning
+    Combines pattern matching and LLM reasoning
     to identify the exact line containing a bug in C++ code.
     """
     
     async def detect(
         self,
         parsed_code: ParsedCode,
-        correct_code: Optional[str],
         context: Optional[str],
         mcp_patterns: list[BugPattern],
         documentation_context: str = "",
@@ -41,24 +38,16 @@ class BugDetectorAgent:
         
         Args:
             parsed_code: Structured parsed code from Code Parser Agent.
-            correct_code: Correct version of the code (if available).
             context: Context/description of what the code does.
             mcp_patterns: Known bug patterns from MCP Lookup Agent.
+            documentation_context: Retrieved MCP documentation text.
         
         Returns:
             List of DetectionResults for all bugs found.
         """
         candidates: list[DetectionResult] = []
         
-        # ─── Layer 1: Diff-based detection ───────────────────────────
-        if config.ENABLE_DIFF_DETECTION and correct_code:
-            diff_result = self._detect_via_diff(parsed_code.raw_code, correct_code)
-            if diff_result:
-                candidates.append(diff_result)
-                logger.info(f"[Diff] Detected bug at line {diff_result.bug_line} "
-                           f"(confidence: {diff_result.confidence:.2f})")
-        
-        # ─── Layer 2: Pattern matching ───────────────────────────────
+        # ─── Layer 1: Pattern matching ───────────────────────────────
         if config.ENABLE_PATTERN_DETECTION and mcp_patterns:
             pattern_result = self._detect_via_pattern(parsed_code, mcp_patterns)
             if pattern_result:
@@ -66,10 +55,10 @@ class BugDetectorAgent:
                 logger.info(f"[Pattern] Detected bug at line {pattern_result.bug_line} "
                            f"(confidence: {pattern_result.confidence:.2f})")
         
-        # ─── Layer 3: LLM analysis (returns ALL bugs) ────────────────
+        # ─── Layer 2: LLM analysis (returns ALL bugs) ────────────────
         if config.ENABLE_LLM_DETECTION:
             llm_results = await self._detect_via_llm(
-                parsed_code, correct_code, context, mcp_patterns, documentation_context
+                parsed_code, context, mcp_patterns, documentation_context
             )
             if llm_results:
                 for r in llm_results:
@@ -107,42 +96,7 @@ class BugDetectorAgent:
         logger.info(f"Total unique bugs found: {len(results)} at lines {[r.bug_line for r in results]}")
         return results
     
-    # ─── Layer 1: Diff Detection ─────────────────────────────────────────────
-    
-    def _detect_via_diff(
-        self,
-        buggy_code: str,
-        correct_code: str,
-    ) -> Optional[DetectionResult]:
-        """
-        Use line-by-line diff to find the bug.
-        
-        This is the highest-confidence method but requires correct code.
-        """
-        try:
-            result = find_primary_bug_line(buggy_code, correct_code)
-            if result is None:
-                logger.debug("[Diff] No difference found between buggy and correct code")
-                return None
-            
-            line_num, description = result
-            
-            # Get all changes for context
-            changes = compute_line_diff(buggy_code, correct_code)
-            diff_summary = generate_diff_summary(buggy_code, correct_code)
-            
-            return DetectionResult(
-                bug_line=line_num,
-                bug_type="diff_detected",
-                confidence=0.95,
-                detection_method="diff",
-                raw_reasoning=f"{description}\n\nFull diff:\n{diff_summary}",
-            )
-        except Exception as e:
-            logger.error(f"[Diff] Detection failed: {e}")
-            return None
-    
-    # ─── Layer 2: Pattern Matching ───────────────────────────────────────────
+    # ─── Layer 1: Pattern Matching ───────────────────────────────────────────
     
     def _detect_via_pattern(
         self,
@@ -195,12 +149,11 @@ class BugDetectorAgent:
         norm_pattern = re.sub(r"\s+", " ", pattern.strip().lower())
         return norm_pattern in norm_line
     
-    # ─── Layer 3: LLM Analysis ───────────────────────────────────────────────
+    # ─── Layer 2: LLM Analysis ───────────────────────────────────────────────
     
     async def _detect_via_llm(
         self,
         parsed_code: ParsedCode,
-        correct_code: Optional[str],
         context: Optional[str],
         mcp_patterns: list[BugPattern],
         documentation_context: str = "",
@@ -211,7 +164,7 @@ class BugDetectorAgent:
         Returns a list of DetectionResult (one per bug found).
         """
         try:
-            prompt = self._build_llm_prompt(parsed_code, correct_code, context, mcp_patterns, documentation_context)
+            prompt = self._build_llm_prompt(parsed_code, context, mcp_patterns, documentation_context)
             
             system_prompt = (
                 "You are an expert RDI/SmartRDI C++ API reviewer. "
@@ -282,7 +235,6 @@ class BugDetectorAgent:
     def _build_llm_prompt(
         self,
         parsed_code: ParsedCode,
-        correct_code: Optional[str],
         context: Optional[str],
         mcp_patterns: list[BugPattern],
         documentation_context: str = "",
@@ -290,7 +242,7 @@ class BugDetectorAgent:
         """Build the LLM prompt for bug detection.
         
         Structure is intentionally ordered to enforce 'context-first' reasoning:
-        Task → MCP Documentation → Known Patterns → Code → Reference → Output
+        Task → MCP Documentation → Known Patterns → Code → Output
         """
         sections = []
         
@@ -346,10 +298,6 @@ class BugDetectorAgent:
         # Code with line numbers (placed AFTER documentation so LLM reads rules first)
         sections.append(f"## Code (with line numbers)\n```cpp\n{parsed_code.get_numbered_code()}\n```\n")
         
-        # Correct code (if available, for reference)
-        if correct_code:
-            sections.append(f"## Reference (Correct Version)\n```cpp\n{correct_code}\n```\n")
-        
         # Output format instruction
         sections.append(
             '## Output\n'
@@ -372,13 +320,12 @@ class BugDetectorAgent:
         """
         Select the best detection result from multiple candidates.
         
-        Priority: diff > pattern > llm (weighted by confidence).
+        Priority: pattern > llm (weighted by confidence).
         If multiple layers agree on the same line, boost confidence.
         """
         # Method priority weights
         method_weight = {
-            "diff": 1.3,     # Diff is most reliable
-            "pattern": 1.1,  # Pattern match is second
+            "pattern": 1.1,  # Pattern match is highest
             "llm": 1.0,      # LLM is baseline
         }
         

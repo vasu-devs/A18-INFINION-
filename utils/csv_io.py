@@ -26,9 +26,7 @@ def read_input_csv(filepath: str | Path) -> list[PipelineInput]:
     The CSV is expected to have columns (case-insensitive, flexible naming):
         - ID (or id, code_id)
         - Code (or code, buggy_code, incorrect_code)
-        - Correct Code (or correct_code, fixed_code)
         - Context (or context, description)
-        - Explanation (or explanation, bug_description)
     
     Args:
         filepath: Path to the input CSV file.
@@ -49,9 +47,7 @@ def read_input_csv(filepath: str | Path) -> list[PipelineInput]:
     column_map = {
         "id": ["id", "code_id", "snippet_id"],
         "code": ["code", "buggy_code", "incorrect_code"],
-        "correct_code": ["correct_code", "fixed_code", "correct"],
         "context": ["context", "description", "code_context"],
-        "explanation": ["explanation", "bug_description", "bug_explanation"],
     }
     
     resolved_columns: dict[str, str] = {}
@@ -71,9 +67,7 @@ def read_input_csv(filepath: str | Path) -> list[PipelineInput]:
         inp = PipelineInput(
             id=int(row[resolved_columns["id"]]),
             code=str(row[resolved_columns["code"]]),
-            correct_code=_get_optional_str(row, resolved_columns.get("correct_code")),
             context=_get_optional_str(row, resolved_columns.get("context")),
-            explanation=_get_optional_str(row, resolved_columns.get("explanation")),
         )
         inputs.append(inp)
     

@@ -76,9 +76,7 @@ class PipelineInput(BaseModel):
     """A single row from the input dataset — one code snippet to analyze."""
     id: int = Field(..., description="Unique ID of the code snippet")
     code: str = Field(..., description="Buggy C++ code snippet")
-    correct_code: Optional[str] = Field(default=None, description="Correct version of the code (if available)")
     context: Optional[str] = Field(default=None, description="Context / description of what the code does")
-    explanation: Optional[str] = Field(default=None, description="Ground-truth explanation of the bug (for validation)")
 
 
 class PipelineOutput(BaseModel):

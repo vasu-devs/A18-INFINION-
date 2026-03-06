@@ -32,7 +32,6 @@ class BugDescriberAgent:
         parsed_code: ParsedCode,
         context: Optional[str],
         mcp_patterns: list[BugPattern],
-        correct_code: Optional[str] = None,
     ) -> DescriptionResult:
         """
         Generate an explanation for the detected bug.
@@ -42,7 +41,6 @@ class BugDescriberAgent:
             parsed_code: Parsed code from Code Parser Agent.
             context: Context/description about the code.
             mcp_patterns: Known bug patterns from MCP Lookup Agent.
-            correct_code: Correct version of the code (if available).
         
         Returns:
             DescriptionResult with human-readable explanation.
@@ -56,20 +54,10 @@ class BugDescriberAgent:
                 references_manual=True,
             )
         
-        # Strategy 2: Use diff-based reasoning if available
-        if detection.detection_method == "diff" and detection.raw_reasoning:
-            diff_explanation = self._format_diff_explanation(detection)
-            if diff_explanation:
-                logger.info("[Describer] Using diff-based explanation")
-                return DescriptionResult(
-                    explanation=diff_explanation,
-                    references_manual=False,
-                )
-        
-        # Strategy 3: Use LLM to generate explanation
+        # Strategy 2: Use LLM to generate explanation
         logger.info("[Describer] Generating LLM explanation")
         llm_explanation = await self._generate_llm_explanation(
-            detection, parsed_code, context, mcp_patterns, correct_code
+            detection, parsed_code, context, mcp_patterns
         )
         
         return DescriptionResult(
@@ -116,30 +104,6 @@ class BugDescriberAgent:
             return True
         return False
     
-    def _format_diff_explanation(self, detection: DetectionResult) -> Optional[str]:
-        """
-        Format a clean explanation from diff-based detection reasoning.
-        
-        The raw reasoning from diff detection contains details like:
-        "Line 5: 'RDI_begin()' should be 'RDI_END()'"
-        
-        We clean this up into a user-friendly explanation.
-        """
-        reasoning = detection.raw_reasoning
-        if not reasoning:
-            return None
-        
-        # Extract the first line of reasoning (before the full diff)
-        first_line = reasoning.split("\n")[0].strip()
-        
-        # Clean up the "Line N: ..." format
-        if first_line.startswith("Line "):
-            # Extract the explanation part after the line reference
-            parts = first_line.split(":", 1)
-            if len(parts) > 1:
-                return parts[1].strip().strip("'\"")
-        
-        return first_line if len(first_line) < 200 else first_line[:200]
     
     async def describe_all(
         self,

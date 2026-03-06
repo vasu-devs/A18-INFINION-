@@ -46,11 +46,9 @@ MCP_SERVER_SCRIPT = str(MCP_SERVER_DIR / "mcp_server.py")
 MCP_SERVER_PORT = int(os.getenv("MCP_SERVER_PORT", "8003"))
 
 # ─── Detection Settings ─────────────────────────────────────────────────────
-DIFF_CONFIDENCE_THRESHOLD = 0.90
 PATTERN_CONFIDENCE_THRESHOLD = 0.70
 LLM_CONFIDENCE_THRESHOLD = 0.50
 
-ENABLE_DIFF_DETECTION = True
 ENABLE_PATTERN_DETECTION = True
 ENABLE_LLM_DETECTION = True
 
