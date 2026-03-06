@@ -158,48 +158,59 @@ class BugDescriberAgent:
             
             prompt_parts.extend([
                 "",
-                "Rules:",
-                "- Write like you're telling a colleague about the issue over coffee — natural, brief, clear",
-                "- ONE paragraph, max 3-4 sentences",
-                "- Cover EVERY bug listed — don't skip any",
-                "- Say WHAT is wrong and what it SHOULD be instead",
-                "- Plain English only — NO code snippets, NO function signatures, NO line numbers",
-                "- NO tags, labels, or prefixes like 'BUG:' or 'Per the manual'",
-                "- Use natural transitions like 'Also' or 'On top of that' between bugs",
+                "### EXPLANATION GENERATION RULES (BRIEF & PLAIN ENGLISH):",
+                "1. KEEP IT SIMPLE: Write a brief, easy-to-understand explanation in plain English. Avoid technical jargon or quoting the manual directly.",
+                "2. BE DIRECT AND CONVERSATIONAL: Explain the bug as if giving a quick tip to a junior developer. 1 or 2 short sentences is perfect.",
+                "3. MULTIPLE BUGS: If there are multiple bugs, summarize them together in one short, natural paragraph.",
+                "4. NO PREFIXES: DO NOT start with 'Here is the', 'The bug is', or any intro. Start directly with the issue.",
+                "5. NO CODE/LINES: Do not include code snippets, function names, or line numbers in the final text.",
                 "",
-                "Good examples:",
-                "The vector editing call is using the wrong mode constant — it should be VTT, not VECD. Also, the write operation is happening inside the execute block when it needs to be outside of it.",
-                "A few function names are misspelled — the getters for vector, value, and waveform need to use the standard naming. On top of that, the pin name used for retrieval doesn't match what was set up during initialization.",
-                "The clamp values got swapped — low and high are in the wrong order, and the voltage is set beyond what this card type actually supports. There's also a missing init call that needs to happen before the force operation.",
+                "Example of GOOD output:",
+                "The voltage level is set too high for this specific pin type, which can cause accuracy issues. You also need to switch the editing mode to VTT before copying any labels.",
             ])
             
             response = await call_llm(
                 prompt="\n".join(prompt_parts),
                 system_prompt=(
-                    "You explain code bugs the way a senior engineer would to a teammate — "
-                    "naturally, briefly, and clearly. No jargon-heavy citations, no robotic phrasing. "
-                    "Just say what's wrong and what it should be. Cover every issue. Keep it human."
+                    "You are a senior C++ engineer giving a quick, friendly tip to a junior developer. "
+                    "You are brief, direct, and use plain English. You never use robotic prefixes like "
+                    "'Here is the' or citations. You summarize all issues into 1-2 short, complete sentences."
                 ),
                 json_mode=False,
                 temperature=0.3,
             )
             
             # Clean up the response
-            explanation = response.strip().strip('"').strip("'")
+            explanation = response.strip().strip('"').strip("'").strip()
             
-            # Strip any BUG: tags
+            # Aggressively strip common prefixes if LLM still includes them
+            prefixes_to_strip = [
+                r"^Here is the bug:\s*", r"^Here's the issue:\s*", r"^The bug is:\s*", 
+                r"^The issue is:\s*", r"^According to the manual,\s*", r"^Per the manual,\s*",
+                r"^Explanation:\s*", r"^Summary:\s*", r"^In plain English:\s*",
+                r"^Here is what's wrong:\s*", r"^Here's what is wrong:\s*"
+            ]
             import re
-            explanation = re.sub(r'^BUG:\s*\w+[\s\-–:]*', '', explanation, flags=re.IGNORECASE).strip()
+            for prefix in prefixes_to_strip:
+                explanation = re.sub(prefix, "", explanation, flags=re.IGNORECASE)
             
-            # Take first 2-3 sentences only
+            # Correct any accidental capitalization after prefix removal
+            if explanation:
+                explanation = explanation[0].upper() + explanation[1:]
+                
+            # Ensure it ends with a period if missing
+            if explanation and explanation[-1] not in ".!?":
+                explanation += "."
+            
+            # Final safety guard: ensure no weird cutoffs
+            # We want to keep it short but complete. 
+            # We already told the LLM 1-2 sentences. 
+            # If it's extremely long (unlikely), we'll split by sentence and take two.
             sentences = re.split(r'(?<=[.!?])\s+', explanation)
-            explanation = ' '.join(sentences[:3])
+            if len(sentences) > 2:
+                explanation = " ".join(sentences[:2])
             
-            # Cap length
-            if len(explanation) > 250:
-                explanation = explanation[:247] + "..."
-            
-            return explanation
+            return explanation.strip()
             
         except Exception as e:
             logger.error(f"[Describer] LLM explanation failed: {e}")

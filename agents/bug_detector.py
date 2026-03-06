@@ -174,17 +174,17 @@ class BugDetectorAgent:
                 "You will receive a C++ snippet with explicitly numbered lines (e.g., \"1: code\").\n"
                 "You will also receive constraints from the MCP Manual.\n\n"
                 "YOUR PRIME DIRECTIVE:\n"
-                "You must find the EXACT, SINGLE line number that represents the ROOT CAUSE of the bug. \n"
-                "An automated script will grade your output. If you output multiple lines when only one line needs to be fixed, you will score 0.\n\n"
-                "ROOT CAUSE TRACING RULES:\n"
-                "1. Setup vs Execution: If a function execution fails because an earlier configuration/state was set incorrectly (e.g., wrong mode, wrong range, missing parameter), the ROOT CAUSE is the line where the incorrect configuration was set, NOT the line where it executes.\n"
-                "2. Typos/Names: If a function name is misspelled (e.g., `readHumanSeniority` instead of `readHumSensor`), the root cause is the line with the typo.\n"
-                "3. Order of Operations: If a function is called out of order (e.g., END before BEGIN), the root cause is the misplaced line itself.\n"
-                "4. DO NOT BLEED: Never flag surrounding lines, variable declarations, or subsequent symptom lines.\n\n"
+                "You must find the EXACT line numbers that represent the ROOT CAUSE(S) of the bugs.\n"
+                "Some snippets contain only 1 bug. Some contain 2, 3, or more independent bugs. You must find ALL of them.\n\n"
+                "ROOT CAUSE TRACING & \"NO BLEED\" RULES:\n"
+                "1. Multiple Independent Bugs: If line 2 has a typo, and line 4 uses the wrong parameter, flag BOTH [2, 4].\n"
+                "2. Setup vs Execution (DO NOT BLEED): If a function execution fails on line 5 *only* because an earlier configuration/state was set incorrectly on line 1, the ROOT CAUSE is line 1. DO NOT flag line 5. Do not flag the symptom.\n"
+                "3. Order of Operations: If a function is called out of order (e.g., END before BEGIN), flag the exact lines that are out of order.\n"
+                "4. Precision: DO NOT flag surrounding lines, variable declarations, or blank lines. An automated script will grade you 0 if you flag innocent lines.\n\n"
                 "OUTPUT FORMAT:\n"
                 "Respond ONLY in valid JSON:\n"
                 "{\n"
-                "  \"bug_lines\": [int], // Array containing ONLY the absolute root cause line number(s). \n"
+                "  \"bug_lines\": [int], // Array containing ALL absolute root cause line number(s), e.g., [1, 5, 10]\n"
                 "  \"confidence\": float,\n"
                 "  \"explanation\": \"According to the MCP manual...\"\n"
                 "}"
@@ -334,9 +334,9 @@ class BugDetectorAgent:
             '## Output\n'
             'Respond ONLY with a JSON object in this format:\n'
             '{\n'
-            '  "bug_lines": [int], // Array containing ONLY the absolute root cause line number(s).\n'
+            '  "bug_lines": [int], // Array containing ALL absolute root cause line number(s), e.g., [1, 5, 10]\n'
             '  "confidence": float,\n'
-            '  "explanation": "Brief explanation referencing the specific manual rule or API constraint violated"\n'
+            '  "explanation": "According to the MCP manual..."\n'
             '}\n'
         )
         
