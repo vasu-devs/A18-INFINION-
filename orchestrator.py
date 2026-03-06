@@ -140,7 +140,12 @@ class Orchestrator:
         logger.debug(f"  [Parser] Parsing code...")
         parsed_code = self.code_parser.parse(snippet.code)
         
+        # Format code with explicit line numbers for the LLM
+        numbered_code = self.code_parser.get_numbered_code_string(parsed_code)
+        
         # Agent 3: Query MCP server for RDI API documentation
+        # The context column from the CSV is the best search query — it pulls
+        # the exact manual page in 1 search instead of hammering with keywords.
         mcp_patterns = []
         documentation_context = ""
         if snippet.context:
@@ -157,6 +162,7 @@ class Orchestrator:
             context=snippet.context,
             mcp_patterns=mcp_patterns,
             documentation_context=documentation_context,
+            numbered_code=numbered_code,
         )
         
         # ── Line-number safety net ─────────────────────────────────

@@ -90,6 +90,22 @@ class CodeParserAgent:
         
         return result
     
+    def get_numbered_code_string(self, parsed_data: ParsedCode) -> str:
+        """
+        Translates the structured ParsedCode into a raw string with explicit 
+        line numbers prepended. This is what you feed to the LLM prompt.
+        
+        Because the parser uses enumerate(start=1), line_number is guaranteed
+        to be 1-indexed. The LLM will see "1: RDI_BEGIN();" and output the
+        exact integer when reporting a bug.
+        """
+        numbered_lines = []
+        for line in parsed_data.lines:
+            # Example output: "1: RDI_BEGIN();"
+            numbered_lines.append(f"{line.line_number}: {line.content}")
+            
+        return "\n".join(numbered_lines)
+    
     def extract_identifiers(self, raw_code: str) -> list[str]:
         """
         Extract function names, variable names, and other identifiers from C++ code.

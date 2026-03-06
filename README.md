@@ -12,119 +12,208 @@
 
 The **Agentic C++ Bug Detection System** is a sophisticated automated code review tool designed for the **Infineon A18 Challenge**. It leverages a multi-agent orchestration architecture to identify, categorize, and explain bugs in C++ code snippets with high precision.
 
-By combining traditional diff analysis, documentation-aware pattern matching, and advanced LLM reasoning, the system excels at detecting both common syntax errors and subtle logic flaws in specialized embedded C++ environments.
+By combining documentation-aware pattern matching and advanced LLM reasoning, the system excels at detecting both common syntax errors and subtle logic flaws in specialized embedded C++ environments.
 
-## ✨ Key Features
+---
 
-- **🤖 Multi-Agent Orchestration**: Integrated pipeline featuring specialized agents for parsing, documentation lookup, detection, and description.
-- **🛡️ 3-Layer Detection Strategy**:
-  - **Layer 1 (Diff)**: High-confidence detection using ground-truth comparisons (when available).
-  - **Layer 2 (Pattern)**: Intelligent matching against a dynamic "Bug Manual" via MCP.
-  - **Layer 3 (LLM)**: Deep semantic analysis using state-of-the-art models (Gemini 2.0, DeepSeek V3, GPT-4o).
-- **🔌 MCP Integration**: Uses the **Model Context Protocol** to dynamically query RDI API documentation and bug patterns, ensuring the models have the most relevant technical context.
-- **🧠 Multi-Bug Support**: Capable of identifying and reporting multiple bugs within a single code snippet, exported as structured comma-separated data.
-- **📈 Comprehensive Logging**: Rich, formatted console output and persistent CSV reporting for easy result auditing.
+## 🏗️ Detailed Architecture
 
-## 🏗️ System Architecture
+The system follows a modular, agentic flow where a central **Orchestrator** manages specialized agents. The core strength lies in its **Context-First** approach, where API documentation is retrieved and analyzed *before* the code is inspected.
+
+### High-Level System Diagram
 
 ```mermaid
 graph TD
-    A[Input Dataset CSV] --> B[Orchestrator Agent]
-    B --> C[Code Parser Agent]
-    B --> D[MCP Lookup Agent]
-    D <--> E[(MCP Server - RDI Docs)]
-    B --> F[Bug Detector Agent]
-    
-    subgraph "Detection Layers"
-        F --> F1[Layer 1: Diff Analysis]
-        F --> F2[Layer 2: Pattern Match]
-        F --> F3[Layer 3: LLM Reasoning]
+    subgraph "Input Layer"
+        CSV[Input Dataset CSV] --> ORCH[Orchestrator Agent]
     end
-    
-    F1 -- Result --> G[Bug Describer Agent]
-    F2 -- Result --> G
-    F3 -- Result --> G
-    
-    G --> H[Output CSV Mapper]
-    H --> I[Final CSV Report]
+
+    subgraph "Core Agentic Pipeline"
+        ORCH --> PARSER[Code Parser Agent]
+        ORCH --> MCP[MCP Lookup Agent]
+        ORCH --> DETECTOR[Bug Detector Agent]
+        ORCH --> DESCRIBER[Bug Describer Agent]
+
+        MCP <--> SERVER[(MCP Server: RDI Docs)]
+        ORCH -.-> |Loop per snippet| PARSER
+    end
+
+    subgraph "Detection Strategy (Multi-Layer)"
+        DETECTOR --> L1[Layer 1: Pattern Match]
+        DETECTOR --> L2[Layer 2: LLM Reasoning]
+        L1 & L2 --> CONSENSUS{Consensus Match?}
+        CONSENSUS --> RESULT[Final Detection]
+    end
+
+    subgraph "Output Layer"
+        DESCRIBER --> MAPPER[CSV Mapper]
+        MAPPER --> REPORT[Final Result CSV]
+    end
+
+    style ORCH fill:#e1f5fe,stroke:#01579b
+    style SERVER fill:#fff3e0,stroke:#e65100
+    style DETECTOR fill:#f3e5f5,stroke:#4a148c
 ```
+
+### ASCII Component Architecture
+
+```text
++-----------------------------------------------------------------------+
+|                         ORCHESTRATOR AGENT                            |
+|  (Loop: Load CSV -> Dispatch Agents -> Consensus -> Export -> Cleanup)|
++--------+-----------------+-------------------+----------------+-------+
+         |                 |                   |                |
+         v                 v                   v                v
++----------------+ +----------------+ +----------------+ +----------------+
+|  CODE PARSER   | |  MCP LOOKUP    | |  BUG DETECTOR  | | BUG DESCRIBER  |
+| (Structure,    | | (RDI API Docs, | | (Pattern Match,| | (Human-Readable|
+|  Identifiers)  | |  Pattern Search)| |  LLM Logic)    | |  Explanations) |
++----------------+ +-------+--------+ +----------------+ +----------------+
+                           |
+                           v
+                  +------------------+
+                  |  MCP SERVER      |
+                  | (FastMCP + BGE)  |
+                  +------------------+
+```
+
+---
+
+## 🤖 Agent Workflows
+
+Each agent in the pipeline has a specific, isolated responsibility. Click to expand and view the detailed internal logic for each agent.
+
+<details>
+<summary><b>1. Orchestrator Agent (The Brain)</b></summary>
+
+The Orchestrator manages the lifecycle of the entire pipeline, ensuring per-snippet isolation and error handling.
+
+**Workflow:**
+1.  **Initialize**: Load configuration and initialize sub-agents.
+2.  **Input Handling**: Read snippets from `Input.csv`.
+3.  **MCP Lifecycle**: Start and connect to the local MCP server.
+4.  **Looping**: For each code snippet:
+    - Dispatch `CodeParserAgent`.
+    - Retrieve documentation via `MCPLookupAgent`.
+    - Run detection through `BugDetectorAgent`.
+    - Generate summary via `BugDescriberAgent`.
+5.  **Aggregation**: Collect all results (handling multi-bug scenarios).
+6.  **Export**: Write structured results to `output.csv`.
+</details>
+
+<details>
+<summary><b>2. Code Parser Agent (The Architect)</b></summary>
+
+Converts raw C++ strings into a structured object for easier analysis by subsequent agents.
+
+**Workflow:**
+1.  **Classification**: Scans lines using regex to identify `Code`, `Comment`, `Preprocessor`, or `Blank`.
+2.  **Numbering**: Generates a 1-indexed numbered string (e.g., `1: RDI_BEGIN();`) to prevent LLM hallucination of line numbers.
+3.  **Identifier Extraction**: Pulls function names and API constants (e.g., `vForceRange`) to feed into the MCP lookup.
+</details>
+
+<details>
+<summary><b>3. MCP Lookup Agent (The Librarian)</b></summary>
+
+Acts as the bridge between the pipeline and the RDI API documentation using the Model Context Protocol.
+
+**Workflow:**
+1.  **Server Management**: Spawns the `mcp_server.py` process if not running.
+2.  **Contextual Search**: Queries the server's `search_documents` tool using the snippet's context.
+3.  **Identifier Search**: Performs targeted lookups for specific API calls found by the Parser.
+4.  **Caching**: Stores retrieved documentation locally to avoid redundant vector searches.
+</details>
+
+<details>
+<summary><b>4. Bug Detector Agent (The Inspector)</b></summary>
+
+Uses a multi-layered approach to maximize precision while minimizing false positives.
+
+**Workflow:**
+1.  **Layer 1 (Pattern)**: Fuzzy-matches line content against "Bug Manual" patterns retrieved from MCP.
+2.  **Layer 2 (LLM)**: Performs deep semantic analysis using a context-first prompt:
+    - *Directive*: "Internalize API rules before reading code."
+    - *Input*: MCP Manual + Context + Numbered Code.
+3.  **Consensus**: Cross-references results. If multiple layers/models agree on a line, confidence is boosted.
+4.  **Filtering**: Drops detections below the 70% confidence threshold.
+</details>
+
+<details>
+<summary><b>5. Bug Describer Agent (The Teacher)</b></summary>
+
+Transforms technical detection data into human-readable explanations that cite documentation.
+
+**Workflow:**
+1.  **Unified Context**: Consolidates all detected bugs for a single snippet.
+2.  **Manual Mapping**: If a bug matched a known MCP pattern, it uses the official manual description.
+3.  **LLM Narrative**: Generates a cohesive 1-paragraph explanation.
+4.  **Constraint Enforcement**: Ensures every explanation starts with "Per the provided manual..." or "According to the documentation..." to satisfy rubric requirements.
+</details>
+
+---
+
+## ✨ Key Features
+
+- **🛡️ 2-Layer Detection Strategy**: Combines deterministic Pattern Matching with semantic LLM Reasoning.
+- **🔌 MCP Integration**: Uses **Model Context Protocol** to dynamically query RDI API documentation, ensuring models have absolute precision.
+- **🧠 Multi-Bug Support**: Identifies and reports multiple bugs in a single snippet, exported as comma-separated values.
+- **📈 Professional CLI**: Richly formatted logging and summary reporting.
+- **🧪 Multi-Provider**: Support for Gemini 2.0, DeepSeek V3, GPT-4o, and more.
+
+---
 
 ## 🚀 Getting Started
 
 ### Prerequisites
-
-- Python 3.10 or higher
-- API Keys for your preferred LLM provider (Gemini, OpenAI, or DeepSeek)
+- Python 3.10+
+- API Keys for Gemini, OpenAI, or DeepSeek.
 
 ### Installation
-
-1. **Clone the repository**:
-   ```bash
-   git clone https://github.com/vasu-devs/A18-INFINION-.git
-   cd A18-INFINION-
-   ```
-
-2. **Set up virtual environment**:
-   ```bash
-   python -m venv venv
-   source venv/bin/activate  # On Windows: venv\Scripts\activate
-   ```
-
-3. **Install dependencies**:
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-4. **Configure Environment Variables**:
-   Create a `.env` file in the root directory (or copy from `.env.example`):
-   ```ini
-   LLM_PROVIDER=gemini
-   GEMINI_API_KEY=your_key_here
-   LOG_LEVEL=INFO
-   ```
+1.  **Clone & Enter**:
+    ```bash
+    git clone https://github.com/vasu-devs/A18-INFINION-.git
+    cd A18-INFINION-
+    ```
+2.  **Virtual Env**:
+    ```bash
+    python -m venv venv
+    # Windows:
+    venv\Scripts\activate
+    # Linux/MacOS:
+    source venv/bin/activate
+    ```
+3.  **Dependencies**:
+    ```bash
+    pip install -r requirements.txt
+    ```
+4.  **Config**: Create `.env` from `.env.example` with your keys.
 
 ### Usage
-
-Run the pipeline using the default input:
 ```bash
+# Default run (uses Input.csv)
 python main.py
+
+# Custom IO and Model
+python main.py --input my_dataset.csv --output results.csv --provider deepseek --model deepseek-chat
 ```
 
-Specify custom input/output and model:
-```bash
-python main.py --input test_data.csv --output results.csv --provider deepseek --model deepseek-chat
-```
-
-**CLI Arguments**:
-- `--input`, `-i`: Path to the input CSV dataset.
-- `--output`, `-o`: Destination path for the result CSV.
-- `--provider`, `-p`: Override the LLM provider (openai, gemini, deepseek, groq).
-- `--test-mode`, `-t`: Simulates a blind test set by ignoring correct code columns.
+---
 
 ## 📂 Project Structure
 
 ```text
-├── agents/             # Core specialized agents
-│   ├── bug_detector.py # Multi-layered detection logic
-│   ├── mcp_lookup.py   # Connection to MCP server
-│   └── orchestrator.py # Flow coordinator
-├── models/             # Pydantic schemas for data integrity
-├── utils/              # Client wrappers and diff utilities
-├── main.py             # CLI entry point
-├── config.py           # Global configuration management
-└── input_dataset.csv   # Sample dataset for analysis
+├── agents/             # Master-Slave Agent Architecture
+│   ├── orchestrator.py # Agent 1: Flow Coordinator
+│   ├── code_parser.py  # Agent 2: Structured Parsing
+│   ├── mcp_lookup.py   # Agent 3: RDI Doc Retrieval
+│   ├── bug_detector.py # Agent 4: Detection Logic
+│   └── bug_describer.py# Agent 5: Explanation Generation
+├── models/             # Pydantic Schemas for Data Integrity
+├── utils/              # Client Wrappers & CSV IO
+├── main.py             # CLI Entry Point
+└── config.py           # Global Environment Settings
 ```
-
-## 🤝 Contribution
-
-Contributions are welcome! Whether it's adding new detection patterns, improving agentic prompts, or enhancing the MCP integration.
-
-1. Fork the Project
-2. Create your Feature Branch (`git checkout -b feature/AmazingFeature`)
-3. Commit your Changes (`git commit -m 'Add some AmazingFeature'`)
-4. Push to the Branch (`git push origin feature/AmazingFeature`)
-5. Open a Pull Request
 
 ---
 
-*Developed as part of the **Infineon A18 Recruitment Challenge**.*
+*Developed for the **Infineon A18 Recruitment Challenge**.*

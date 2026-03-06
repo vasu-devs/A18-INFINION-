@@ -32,6 +32,7 @@ class BugDetectorAgent:
         context: Optional[str],
         mcp_patterns: list[BugPattern],
         documentation_context: str = "",
+        numbered_code: str = "",
     ) -> list[DetectionResult]:
         """
         Run all detection layers and return ALL detected bugs.
@@ -41,6 +42,7 @@ class BugDetectorAgent:
             context: Context/description of what the code does.
             mcp_patterns: Known bug patterns from MCP Lookup Agent.
             documentation_context: Retrieved MCP documentation text.
+            numbered_code: Pre-formatted code with explicit line numbers from CodeParserAgent.
         
         Returns:
             List of DetectionResults for all bugs found.
@@ -58,7 +60,7 @@ class BugDetectorAgent:
         # ─── Layer 2: LLM analysis (returns ALL bugs) ────────────────
         if config.ENABLE_LLM_DETECTION:
             llm_results = await self._detect_via_llm(
-                parsed_code, context, mcp_patterns, documentation_context
+                parsed_code, context, mcp_patterns, documentation_context, numbered_code
             )
             if llm_results:
                 for r in llm_results:
@@ -157,6 +159,7 @@ class BugDetectorAgent:
         context: Optional[str],
         mcp_patterns: list[BugPattern],
         documentation_context: str = "",
+        numbered_code: str = "",
     ) -> list[DetectionResult]:
         """
         Use an LLM to analyze the code and identify ALL buggy lines.
@@ -164,19 +167,27 @@ class BugDetectorAgent:
         Returns a list of DetectionResult (one per bug found).
         """
         try:
-            prompt = self._build_llm_prompt(parsed_code, context, mcp_patterns, documentation_context)
+            prompt = self._build_llm_prompt(parsed_code, context, mcp_patterns, documentation_context, numbered_code)
             
             system_prompt = (
-                "You are an expert RDI/SmartRDI C++ API reviewer. "
-                "CRITICAL: You must read and internalize the provided MCP manual / API documentation "
-                "BEFORE analyzing the code. You must prioritize the rules in the provided manual "
-                "over standard C++ syntax rules. If the manual mentions a specific function or "
-                "variable constraint, check for that exact constraint first. "
-                "Your task is to find lines that contain REAL bugs — wrong function names, "
-                "wrong parameter values, wrong argument order, wrong API usage, inverted lifecycle, "
-                "or misspelled identifiers. Do NOT flag correct code, comments, or style issues. "
-                "Be VERY selective — only flag genuine errors that violate the documented API rules. "
-                "Respond ONLY with valid JSON."
+                "You are an expert C++ debugging agent operating under strict automated grading constraints.\n"
+                "You will receive a C++ snippet with explicitly numbered lines (e.g., \"1: code\").\n"
+                "You will also receive constraints from the MCP Manual.\n\n"
+                "YOUR PRIME DIRECTIVE:\n"
+                "You must find the EXACT, SINGLE line number that represents the ROOT CAUSE of the bug. \n"
+                "An automated script will grade your output. If you output multiple lines when only one line needs to be fixed, you will score 0.\n\n"
+                "ROOT CAUSE TRACING RULES:\n"
+                "1. Setup vs Execution: If a function execution fails because an earlier configuration/state was set incorrectly (e.g., wrong mode, wrong range, missing parameter), the ROOT CAUSE is the line where the incorrect configuration was set, NOT the line where it executes.\n"
+                "2. Typos/Names: If a function name is misspelled (e.g., `readHumanSeniority` instead of `readHumSensor`), the root cause is the line with the typo.\n"
+                "3. Order of Operations: If a function is called out of order (e.g., END before BEGIN), the root cause is the misplaced line itself.\n"
+                "4. DO NOT BLEED: Never flag surrounding lines, variable declarations, or subsequent symptom lines.\n\n"
+                "OUTPUT FORMAT:\n"
+                "Respond ONLY in valid JSON:\n"
+                "{\n"
+                "  \"bug_lines\": [int], // Array containing ONLY the absolute root cause line number(s). \n"
+                "  \"confidence\": float,\n"
+                "  \"explanation\": \"According to the MCP manual...\"\n"
+                "}"
             )
             
             response = await call_llm(
@@ -188,44 +199,53 @@ class BugDetectorAgent:
             
             data = parse_json_response(response)
             
-            # Handle both single-bug and multi-bug responses
-            bugs_list = data.get("bugs", None)
-            if bugs_list is None:
-                # Fallback: single-bug format
-                bugs_list = [data]
-            
+            # Provide support for the new "bug_lines" array format
             results = []
-            for bug in bugs_list:
-                bug_line = int(bug.get("bug_line", bug.get("line_number", 1)))
-                reasoning = bug.get("reasoning", bug.get("explanation", ""))
-                bug_type = bug.get("bug_type", "llm_detected")
-                confidence_raw = bug.get("confidence", 0.7)
+            
+            # Extract bug lines from the new format or fallback to the old formats
+            if "bug_lines" in data and isinstance(data["bug_lines"], list):
+                # New format: {"bug_lines": [1, 2], "confidence": 0.9, "explanation": "..."}
+                for b_line in data["bug_lines"]:
+                    results.append(DetectionResult(
+                        bug_line=int(b_line),
+                        bug_type="llm_detected",
+                        confidence=min(float(data.get("confidence", 0.90)), 0.90),
+                        detection_method="llm",
+                        raw_reasoning=data.get("explanation", ""),
+                    ))
+            else:
+                # Handle old single-bug and multi-bug responses
+                bugs_list = data.get("bugs", None)
+                if bugs_list is None:
+                    bugs_list = [data]
                 
+                for bug in bugs_list:
+                    bug_line = int(bug.get("bug_line", bug.get("line_number", 1)))
+                    reasoning = bug.get("reasoning", bug.get("explanation", ""))
+                    bug_type = bug.get("bug_type", "llm_detected")
+                    confidence_raw = bug.get("confidence", 0.7)
+                    
+                    results.append(DetectionResult(
+                        bug_line=bug_line,
+                        bug_type=bug_type,
+                        confidence=min(float(confidence_raw), 0.90),
+                        detection_method="llm",
+                        raw_reasoning=reasoning,
+                    ))
+            
+            # Post-process the extracted results (0-index correction & clamping)
+            for i, res in enumerate(results):
                 # ── 0-index safety guard ──────────────────────────
-                # LLMs sometimes return 0-indexed line numbers.
-                # The output CSV must be strictly 1-indexed.
-                if bug_line == 0:
-                    logger.warning(
-                        "[LLM] Returned 0-indexed bug_line=0. "
-                        "Applying +1 offset to correct to 1-indexed."
-                    )
-                    bug_line += 1
+                if res.bug_line == 0:
+                    logger.warning("[LLM] Returned 0-indexed bug_line=0. Applying +1 offset.")
+                    res.bug_line += 1
                 
                 # Validate line number is within range
-                if bug_line < 1 or bug_line > parsed_code.total_lines:
+                if res.bug_line < 1 or res.bug_line > parsed_code.total_lines:
                     logger.warning(
-                        f"[LLM] Returned line {bug_line} outside range [1, {parsed_code.total_lines}]. "
-                        f"Clamping."
+                        f"[LLM] Returned line {res.bug_line} outside range [1, {parsed_code.total_lines}]. Clamping."
                     )
-                    bug_line = max(1, min(bug_line, parsed_code.total_lines))
-                
-                results.append(DetectionResult(
-                    bug_line=bug_line,
-                    bug_type=bug_type,
-                    confidence=min(float(confidence_raw), 0.90),
-                    detection_method="llm",
-                    raw_reasoning=reasoning,
-                ))
+                    res.bug_line = max(1, min(res.bug_line, parsed_code.total_lines))
             
             return results if results else None
         except Exception as e:
@@ -238,6 +258,7 @@ class BugDetectorAgent:
         context: Optional[str],
         mcp_patterns: list[BugPattern],
         documentation_context: str = "",
+        numbered_code: str = "",
     ) -> str:
         """Build the LLM prompt for bug detection.
         
@@ -268,6 +289,15 @@ class BugDetectorAgent:
             '- Style preferences or formatting\n'
         )
         
+        # Critical line-number precision instruction
+        sections.append(
+            '## ⚠️ CRITICAL LINE NUMBER INSTRUCTIONS\n'
+            'You must be surgical. ONLY flag the exact line number where the root cause of the error occurs.\n'
+            'DO NOT flag surrounding lines, variable initializations, or subsequent lines that just happen '
+            'to fail because of the earlier bug. If the error is a typo or wrong parameter, output ONLY '
+            'the single line containing that typo.\n'
+        )
+        
         # ── CONTEXT-FIRST: MCP documentation and patterns BEFORE the code ──
         # This ordering forces the LLM to absorb API rules before seeing the code.
         
@@ -296,20 +326,18 @@ class BugDetectorAgent:
             sections.append(f"## Context\nThis code is related to: {context}\n")
         
         # Code with line numbers (placed AFTER documentation so LLM reads rules first)
-        sections.append(f"## Code (with line numbers)\n```cpp\n{parsed_code.get_numbered_code()}\n```\n")
-        
-        # Output format instruction
+        # Use the pre-formatted numbered_code from CodeParserAgent if available,
+        # which uses the explicit "N: content" format for unambiguous line references.
+        code_text = numbered_code if numbered_code else parsed_code.get_numbered_code()
+        sections.append(f"## Code (with line numbers)\n```cpp\n{code_text}\n```\n")
         sections.append(
             '## Output\n'
-            'Respond with a JSON object containing a `bugs` array. ONLY include lines you are VERY confident contain a real bug.\n'
-            'Each bug has:\n'
-            '- `bug_line`: The exact 1-indexed line number (integer)\n'
-            '- `bug_type`: A short category (string)\n'
-            '- `reasoning`: Brief explanation referencing the specific manual rule or API constraint violated (string)\n'
-            '- `confidence`: Confidence 0.0-1.0 — ONLY include bugs with confidence >= 0.80 (number)\n\n'
-            'IMPORTANT: Do NOT include lines that look correct. Be precise. '
-            'Reference the documentation or manual rule that the buggy line violates.\n'
-            'Example: {"bugs": [{"bug_line": 3, "bug_type": "wrong_function", "reasoning": "Per the RDI manual, getFFC should be getFFV for frequency voltage", "confidence": 0.95}]}\n'
+            'Respond ONLY with a JSON object in this format:\n'
+            '{\n'
+            '  "bug_lines": [int], // Array containing ONLY the absolute root cause line number(s).\n'
+            '  "confidence": float,\n'
+            '  "explanation": "Brief explanation referencing the specific manual rule or API constraint violated"\n'
+            '}\n'
         )
         
         return "\n".join(sections)

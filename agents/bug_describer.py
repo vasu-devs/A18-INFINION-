@@ -144,7 +144,7 @@ class BugDescriberAgent:
                     )
             
             prompt_parts = [
-                "Write ONE cohesive plain-English explanation that discusses EVERY identified bug listed below.",
+                "Explain the bugs found in this code snippet in plain English.",
                 "",
                 f"Bugs found:",
                 bugs_text,
@@ -159,34 +159,29 @@ class BugDescriberAgent:
             prompt_parts.extend([
                 "",
                 "Rules:",
-                "- You MUST begin the explanation with an explicit documentation citation, such as:",
-                "  'Per the provided MCP manual...' or 'According to the documentation...'",
-                "- Every bug mentioned MUST reference the specific manual rule or API constraint it violates",
-                "- ONE paragraph, max 4 sentences total",
-                "- Discuss EVERY bug listed above specifically — do not skip any",
-                "- Use terms like 'Additionally', 'Furthermore', or 'Also' to transition between bugs",
-                "- Plain English only, NO code snippets, NO function signatures",
-                "- NO tags like 'BUG:' or labels",
-                "- Do NOT mention line numbers",
-                "- Describe exactly WHAT is wrong for each point and WHY it violates the documentation",
+                "- Write like you're telling a colleague about the issue over coffee — natural, brief, clear",
+                "- ONE paragraph, max 3-4 sentences",
+                "- Cover EVERY bug listed — don't skip any",
+                "- Say WHAT is wrong and what it SHOULD be instead",
+                "- Plain English only — NO code snippets, NO function signatures, NO line numbers",
+                "- NO tags, labels, or prefixes like 'BUG:' or 'Per the manual'",
+                "- Use natural transitions like 'Also' or 'On top of that' between bugs",
                 "",
                 "Good examples:",
-                "Per the provided MCP manual, the vector editing mode uses the wrong constant and should use VTT mode instead of VECD mode as specified in the API documentation. Additionally, according to the documentation, the write operation is performed inside an execute block when it should be outside.",
-                "According to the documentation, three function names are misspelled and should use the standard getter names for vector, value, and waveform as defined in the RDI API reference. Furthermore, per the manual, the pin identifier used for retrieval does not match the initialization.",
-                "Per the provided MCP manual, the clamp values are in the wrong order and the voltage exceeds the allowed range for this card type. Also, according to the documentation, the required initialization command is missing before performing the force operation.",
+                "The vector editing call is using the wrong mode constant — it should be VTT, not VECD. Also, the write operation is happening inside the execute block when it needs to be outside of it.",
+                "A few function names are misspelled — the getters for vector, value, and waveform need to use the standard naming. On top of that, the pin name used for retrieval doesn't match what was set up during initialization.",
+                "The clamp values got swapped — low and high are in the wrong order, and the voltage is set beyond what this card type actually supports. There's also a missing init call that needs to happen before the force operation.",
             ])
             
             response = await call_llm(
                 prompt="\n".join(prompt_parts),
                 system_prompt=(
-                    "You write brief, accurate plain English bug descriptions. No code, no tags. "
-                    "Cover every issue mentioned. CRITICAL: You MUST begin your explanation with an "
-                    "explicit documentation citation such as 'Per the provided MCP manual...' or "
-                    "'According to the documentation...'. Every bug you describe must reference the "
-                    "specific manual rule or API constraint that is violated."
+                    "You explain code bugs the way a senior engineer would to a teammate — "
+                    "naturally, briefly, and clearly. No jargon-heavy citations, no robotic phrasing. "
+                    "Just say what's wrong and what it should be. Cover every issue. Keep it human."
                 ),
                 json_mode=False,
-                temperature=0.2,
+                temperature=0.3,
             )
             
             # Clean up the response
@@ -208,10 +203,10 @@ class BugDescriberAgent:
             
         except Exception as e:
             logger.error(f"[Describer] LLM explanation failed: {e}")
-            # Fallback: combine raw reasoning with documentation prefix
+            # Fallback: combine raw reasoning naturally
             parts = []
             for det in detections:
                 r = det.raw_reasoning.split("\n")[0][:80] if det.raw_reasoning else f"Bug at line {det.bug_line}"
                 parts.append(r)
-            return "Per the provided MCP manual, " + ("; ".join(parts)[:220])
+            return "; ".join(parts)[:250]
 
