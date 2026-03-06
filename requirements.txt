@@ -1,25 +1,34 @@
-# ─── Core Application ────────────────────────────────────────────────────────
-pydantic>=2.0.0          # Data validation and settings management
-python-dotenv>=1.0.0    # Loading .env variables
-pandas>=2.0.0           # CSV processing in csv_io.py
+# 🔍 Agentic C++ Bug Detection System - Dependencies
 
-# ─── LLM Clients ─────────────────────────────────────────────────────────────
-openai>=1.30.0          # DeepSeek V3 and OpenAI compatibility
-google-genai>=1.0.0     # Gemini Flash 2.0
-groq>=0.4.0             # Groq Llama 3.3
-aiohttp>=3.9.0          # Ollama REST API and general async HTTP
-httpx>=0.27.0           # Model Context Protocol (MCP) transport
+# ─── Core Application & Framework ───────────────────────────────────────────
+pydantic>=2.4.0             # Data validation and robust settings management
+python-dotenv>=1.0.0       # Environment variable loading from .env
+pandas>=2.1.0              # Efficient CSV parsing and data manipulation
+pathlib>=1.0.1             # Object-oriented filesystem paths (backport for older py)
+
+# ─── LLM SDKs & Async Transport ──────────────────────────────────────────────
+# These enable the multi-provider fallback system (Gemini, DeepSeek, OpenAI, etc.)
+openai>=1.12.0             # Primary for DeepSeek V3 and OpenAI models
+google-genai>=0.2.0        # Official SDK for Gemini 2.0 Flash models
+groq>=0.4.2                # Fast Llama 3.3 inference support
+aiohttp>=3.9.1             # Asynchronous HTTP for Ollama and MCP SSE
+httpx>=0.26.0              # High-performance HTTP client for MCP communication
 
 # ─── Model Context Protocol (MCP) ───────────────────────────────────────────
-mcp>=1.1.2              # MCP Python SDK
-fastmcp==2.14.5         # High-level MCP server framework
+# Enables the intelligent retrieval of RDI API documentation
+mcp>=1.1.2                 # MCP Python SDK for client/server communication
+fastmcp>=0.4.1             # Simplified framework for creating the MCP server
 
-# ─── MCP Server & RAG Engine ────────────────────────────────────────────────
-llama-index-core>=0.12.0
-llama-index-embeddings-huggingface>=0.4.0
-torch>=2.0.0            # Required for HuggingFace embeddings
-transformers>=4.30.0    # Required for HuggingFace embeddings
+# ─── MCP Search & RAG Engine ────────────────────────────────────────────────
+# Required for the local vector search over RDI documentation
+llama-index-core>=0.9.40
+llama-index-embeddings-huggingface>=0.1.4
+torch>=2.1.0               # Tensor backend for embeddings (CPU/GPU)
+transformers>=4.36.0       # NLP engine for document processing
+sentence-transformers>=2.2.2 # Underlying vectorization engine
 
-# ─── CLI and UI (Optional but recommended) ───────────────────────────────────
-typer>=0.9.0            # CLI argument handling
-rich>=13.0.0            # Beautiful terminal formatting
+# ─── Tooling & CLI Enhancement ──────────────────────────────────────────────
+# Provides a professional terminal experience and robust CLI arguments
+typer[all]>=0.9.0          # Powerful CLI argument handling with help generation
+rich>=13.7.0               # High-fidelity terminal formatting and logging
+pytest>=8.0.0              # Framework for verifying agent logic (dev)
